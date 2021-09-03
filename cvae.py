@@ -7,7 +7,7 @@ from module.optimizers import Optimizer
 from torch.nn import functional as F
 from module.losses import x_loss, kl_loss, mse_loss
 
-from utils.save_load import LossRecorder, last_samples
+from utils.save_load import LossRecorder, last_samples, available_results
 
 from utils.misc import make_list
 
@@ -1474,10 +1474,10 @@ class ClassificationVariationalNetwork(nn.Module):
             logging.error('You have to compute accuracies '
                           'before computing misclassification rates')
 
-        available = available_results(self, min_samples=1, ood_sets='testset')['recorder']
+        available = available_results(self, min_samples=1, ood_sets='testset')['recorders']
         
         if not sample_dir:
-            sample_dir = os.apth.join(self.saved_dir, 'samples', 'last')
+            sample_dir = os.path.join(self.saved_dir, 'samples', 'last')
 
         testset = self.training_parameters['set']
         
@@ -1490,8 +1490,11 @@ class ClassificationVariationalNetwork(nn.Module):
         for which, all_methods in zip(('predict', 'miss'),
                                       (self.predict_methods, self.ood_methods)):
 
-            methods[which] == make_list(methods[which], all_methods)
+            methods[which] = make_list(methods[which], all_methods)
+            print('*** methods for', which, ':', methods[which], '(', *all_methods, ')')
+
             for m in methods[which]:
+                print('*** |_', m)
                 assert m in all_methods
 
         losses = recorder._tensors
@@ -1505,35 +1508,38 @@ class ClassificationVariationalNetwork(nn.Module):
             y_ = self.predict_after_evaluate(logits, losses, method=predict_method)
             missed = y_ != y
             correct = y_ == y
-            miss_losses = {k: losses[k][missed] for k in losses}
-            test_measures = self.batch_dist_measures(logits, losses, methods['ood'])
-            miss_measures = self.batch_dist_measures(logits[missed], miss_losses, methods['ood'])
+            miss_losses = {k: losses[k][..., missed] for k in losses}
+            test_measures = self.batch_dist_measures(logits, losses, methods['miss'])
+            miss_measures = self.batch_dist_measures(logits[missed], miss_losses, methods['miss'])
 
-            fpr_, tpr_, precision_, recall_, thresholds_, fpr95, precision95 = {}, {}, {}, {}, {}, {}
+            fpr_, tpr_, precision_, recall_, thresholds_ = {}, {}, {}, {}, {}
 
             for m in methods['miss']:
                 correct_labels = np.concatenate([np.ones(len(y)), np.zeros(sum(missed))])
                 all_missed_measures = np.concatenate([test_measures[m].cpu(),
                                                       miss_measures[m].cpu()])
                 
-                fpr_[m], tpr_[m], thresholds_[m] =  roc_curve(correct_labels,
-                                                              all_missed_measures[m])
+                all_fpr, all_tpr, all_thresholds =  roc_curve(correct_labels,
+                                                              all_missed_measures)
 
-                tp = [(test_measures[m][correct] > t).sum() for t in thresholds_[m]]
-                fp =  [(test_measures[m][missed] > t).sum() for t in thresholds_[m]]
-
-                fpr95, t95 = fpr_at_tpr(fpr_[m], tpr_[m], 0.95,
+                kepped_thr = [fpr_at_tpr(fpr_[m], tpr_[m], a,
                                         thresholds_[m],
-                                        return_threshold=True)
+                                        return_threshold=True)[1] for a in keeped_tpr]
 
-                tp95 = (test_measures[m][correct] > t95).sum()
-                fp95 = (test_measures[m][missed] > t95).sum() 
+                tp = [(test_measures[m][correct] > t).sum() for t in keeped_thr]
+                tn =  [(test_measures[m][missed] <= t).sum() for t in keeped_thr]
+                fp =  [(test_measures[m][missed] > t).sum() for t in keeped_thr]
+                fn = [(test_measures[m][correct] <= t).sum() for t in keeped_thr]
+                
+                tp95 = (test_measures[m][correct] > t95).sum().item()
+                fp95 = (test_measures[m][missed] > t95).sum() .item()
 
+                
                 p95 = tp95 / (tp95 + fp95)
-                r95 = tp95 / correct.sum()
+                r95 = tp95 / correct.sum().item()
                 
                 precision_[m] = tp / (tp + fp)
-                recall_[m] = tp / correct.sum()
+                recall_[m] = tp / correct.sum().item()
 
                 print('method:', m)
                 print('precision:', p95, 'recall:', r95, 'fpr:', fpr95, 'tpr:', tpr95)
