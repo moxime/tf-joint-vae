@@ -1461,7 +1461,7 @@ class ClassificationVariationalNetwork(nn.Module):
                     f = os.path.join(d, f'record-{s}.pth')
         
                     recorders[s].save(f.format(s=s))
-        
+                    
     def misclassification_detection_rate(self,
                                          recorder=None,
                                          wygiswyu=True,
@@ -1490,15 +1490,9 @@ class ClassificationVariationalNetwork(nn.Module):
         for which, all_methods in zip(('predict', 'miss'),
                                       (self.predict_methods, self.ood_methods)):
 
-            if methods['which'] == 'all':
-                methods['which'] =all_methods
-
-            elif isinstance(methods['which'], str):
-                assert methods['which'] in all_methods
-                methods['which'] = [methods['which']]
-            else:
-                for m in methods['which']:
-                    assert m in all_methods
+            methods[which] == make_list(methods[which], all_methods)
+            for m in methods[which]:
+                assert m in all_methods
 
         losses = recorder._tensors
         logits = losses.pop('logits').T
@@ -1517,7 +1511,7 @@ class ClassificationVariationalNetwork(nn.Module):
 
             fpr_, tpr_, precision_, recall_, thresholds_, fpr95, precision95 = {}, {}, {}, {}, {}, {}
 
-            for m in methods['ood']:
+            for m in methods['miss']:
                 correct_labels = np.concatenate([np.ones(len(y)), np.zeros(sum(missed))])
                 all_missed_measures = np.concatenate([test_measures[m].cpu(),
                                                       miss_measures[m].cpu()])
@@ -1528,8 +1522,9 @@ class ClassificationVariationalNetwork(nn.Module):
                 tp = [(test_measures[m][correct] > t).sum() for t in thresholds_[m]]
                 fp =  [(test_measures[m][missed] > t).sum() for t in thresholds_[m]]
 
-                fpr95, tpr95 = fpr_at_tpr(fpr_[m], tpr_[m},
-                                        thresholds_[m], return_threshold=True)
+                fpr95, t95 = fpr_at_tpr(fpr_[m], tpr_[m], 0.95,
+                                        thresholds_[m],
+                                        return_threshold=True)
 
                 tp95 = (test_measures[m][correct] > t95).sum()
                 fp95 = (test_measures[m][missed] > t95).sum() 
