@@ -9,9 +9,7 @@ def testing_plan(model, min_samples=1000, epoch_tolerance=10,
 
     available = available_results(model, min_samples, epoch_tolerance, predict_methods, ood_sets, ood_methods)
         
-    if isinstance(model, str):
-        model = Model.load(model, load_state=False)
-    elif isinstance(model, dict):
+    if isinstance(model, dict):
         model = model['net']
 
     predict_methods = make_list(predict_methods, model.predict_methods)

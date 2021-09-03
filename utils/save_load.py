@@ -516,6 +516,10 @@ def available_results(model, min_samples=1000, epoch_tolerance=10,
 
     testset = model.training_parameters['set']
     all_ood_sets = get_same_size_by_name(testset)
+
+    if ood_sets == 'testset':
+        ood_sets = testset
+        
     ood_sets = make_list(ood_sets, all_ood_sets)
     
     sets = [testset] + ood_sets

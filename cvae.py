@@ -1259,8 +1259,7 @@ class ClassificationVariationalNetwork(nn.Module):
         shuffle = {s: False for s in all_set_names}
         recording = {}
         recorded = {}
-
-        
+   
         if wygiwyu:
 
             from_r, _ = testing_plan(self, ood_sets=[o.name for o in oodsets], ood_methods=ood_methods)
@@ -1463,6 +1462,87 @@ class ClassificationVariationalNetwork(nn.Module):
         
                     recorders[s].save(f.format(s=s))
         
+    def misclassification_detection_rate(self,
+                                         recorder=None,
+                                         wygiswyu=True,
+                                         sample_dir=None,
+                                         predict_methods='all',
+                                         ood_methods='all',
+                                         outputs=EpochOutput):
+
+        if not wygiswyu:
+            logging.error('You have to compute accuracies '
+                          'before computing misclassification rates')
+
+        available = available_results(self, min_samples=1, ood_sets='testset')['recorder']
+        
+        if not sample_dir:
+            sample_dir = os.apth.join(self.saved_dir, 'samples', 'last')
+
+        testset = self.training_parameters['set']
+        
+        if not recorder:
+            f = f'record-{testset}.pth'
+            recorder = LossRecorder.load(os.path.join(sample_dir, f))
+        
+        methods = {'predict': predict_methods, 'miss': ood_methods}
+
+        for which, all_methods in zip(('predict', 'miss'),
+                                      (self.predict_methods, self.ood_methods)):
+
+            if methods['which'] == 'all':
+                methods['which'] =all_methods
+
+            elif isinstance(methods['which'], str):
+                assert methods['which'] in all_methods
+                methods['which'] = [methods['which']]
+            else:
+                for m in methods['which']:
+                    assert m in all_methods
+
+        losses = recorder._tensors
+        logits = losses.pop('logits').T
+        y = losses.pop('y_true')
+
+        keeped_tpr = [pc / 100 for pc in range(90, 100)]
+        
+        for predict_method in methods['predict']:
+            
+            y_ = self.predict_after_evaluate(logits, losses, method=predict_method)
+            missed = y_ != y
+            correct = y_ == y
+            miss_losses = {k: losses[k][missed] for k in losses}
+            test_measures = self.batch_dist_measures(logits, losses, methods['ood'])
+            miss_measures = self.batch_dist_measures(logits[missed], miss_losses, methods['ood'])
+
+            fpr_, tpr_, precision_, recall_, thresholds_, fpr95, precision95 = {}, {}, {}, {}, {}, {}
+
+            for m in methods['ood']:
+                correct_labels = np.concatenate([np.ones(len(y)), np.zeros(sum(missed))])
+                all_missed_measures = np.concatenate([test_measures[m].cpu(),
+                                                      miss_measures[m].cpu()])
+                
+                fpr_[m], tpr_[m], thresholds_[m] =  roc_curve(correct_labels,
+                                                              all_missed_measures[m])
+
+                tp = [(test_measures[m][correct] > t).sum() for t in thresholds_[m]]
+                fp =  [(test_measures[m][missed] > t).sum() for t in thresholds_[m]]
+
+                fpr95, tpr95 = fpr_at_tpr(fpr_[m], tpr_[m},
+                                        thresholds_[m], return_threshold=True)
+
+                tp95 = (test_measures[m][correct] > t95).sum()
+                fp95 = (test_measures[m][missed] > t95).sum() 
+
+                p95 = tp95 / (tp95 + fp95)
+                r95 = tp95 / correct.sum()
+                
+                precision_[m] = tp / (tp + fp)
+                recall_[m] = tp / correct.sum()
+
+                print('method:', m)
+                print('precision:', p95, 'recall:', r95, 'fpr:', fpr95, 'tpr:', tpr95)
+            
     def train_model(self,
                     trainset=None,
                     transformer=None,
