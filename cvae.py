@@ -1358,13 +1358,13 @@ class ClassificationVariationalNetwork(nn.Module):
         
                     recorders[s].save(f.format(s=s))
                 
-        keeped_tpr = [pc / 100 for pc in range(90, 100)]
+        kept_tpr = [pc / 100 for pc in range(90, 100)]
         no_result = {'epochs': 0,
                      'n': 0,
                      'auc': 0,
-                     'tpr': keeped_tpr,
-                     'fpr': [1 for _ in keeped_tpr],
-                     'thresholds':[None for _ in keeped_tpr]}
+                     'tpr': kept_tpr,
+                     'fpr': [1 for _ in kept_tpr],
+                     'thresholds':[None for _ in kept_tpr]}
                      
         for oodset in oodsets:
 
@@ -1441,13 +1441,13 @@ class ClassificationVariationalNetwork(nn.Module):
             for m in ood_methods_per_set[s]:
                 fpr_and_thresholds = [fpr_at_tpr(fpr_[m], tpr_[m], a,
                                                  thresholds=thresholds_[m],
-                                                 return_threshold=True) for a in keeped_tpr] 
+                                                 return_threshold=True) for a in kept_tpr] 
                 fpr_m = [f[0] for f in fpr_and_thresholds]
                 t_m = [f[1] for f in fpr_and_thresholds]
                 ood_results[m] = {'epochs': updated_epoch,
                                   'n': ood_n_batch * batch_size,
                                   'auc': auc_[m],
-                                  'tpr': keeped_tpr,
+                                  'tpr': kept_tpr,
                                   'fpr': fpr_m, 
                                   'thresholds': t_m }
                 
@@ -1468,6 +1468,7 @@ class ClassificationVariationalNetwork(nn.Module):
                                          sample_dir=None,
                                          predict_methods='all',
                                          ood_methods='all',
+                                         shown_tpr=0.95,
                                          outputs=EpochOutput):
 
         if not wygiswyu:
@@ -1491,29 +1492,34 @@ class ClassificationVariationalNetwork(nn.Module):
                                       (self.predict_methods, self.ood_methods)):
 
             methods[which] = make_list(methods[which], all_methods)
-            print('*** methods for', which, ':', methods[which], '(', *all_methods, ')')
+            # print('*** methods for', which, ':', methods[which], '(', *all_methods, ')')
 
             for m in methods[which]:
-                print('*** |_', m)
+                # print('*** |_', m)
                 assert m in all_methods
 
         losses = recorder._tensors
         logits = losses.pop('logits').T
         y = losses.pop('y_true')
 
-        keeped_tpr = [pc / 100 for pc in range(90, 100)]
-        
+        kept_tpr = [pc / 100 for pc in range(90, 100)]
+
+        _p = 5.2
         for predict_method in methods['predict']:
             
             y_ = self.predict_after_evaluate(logits, losses, method=predict_method)
             missed = y_ != y
             correct = y_ == y
+
+            acc = correct.sum().item() / (correct.sum().item() + missed.sum().item())
+                   
             miss_losses = {k: losses[k][..., missed] for k in losses}
             test_measures = self.batch_dist_measures(logits, losses, methods['miss'])
             miss_measures = self.batch_dist_measures(logits[missed], miss_losses, methods['miss'])
 
             fpr_, tpr_, precision_, recall_, thresholds_ = {}, {}, {}, {}, {}
 
+            print(f'{predict_method} ({100 * acc:{_p}f})')
             for m in methods['miss']:
                 correct_labels = np.concatenate([np.ones(len(y)), np.zeros(sum(missed))])
                 all_missed_measures = np.concatenate([test_measures[m].cpu(),
@@ -1522,27 +1528,37 @@ class ClassificationVariationalNetwork(nn.Module):
                 all_fpr, all_tpr, all_thresholds =  roc_curve(correct_labels,
                                                               all_missed_measures)
 
-                kepped_thr = [fpr_at_tpr(fpr_[m], tpr_[m], a,
-                                        thresholds_[m],
-                                        return_threshold=True)[1] for a in keeped_tpr]
+                kept_thr = [fpr_at_tpr(all_fpr, all_tpr, a,
+                                        all_thresholds,
+                                        return_threshold=True)[1] for a in kept_tpr]
 
-                tp = [(test_measures[m][correct] > t).sum() for t in keeped_thr]
-                tn =  [(test_measures[m][missed] <= t).sum() for t in keeped_thr]
-                fp =  [(test_measures[m][missed] > t).sum() for t in keeped_thr]
-                fn = [(test_measures[m][correct] <= t).sum() for t in keeped_thr]
+                tp = [(test_measures[m][correct] > t).sum().item() for t in kept_thr]
+                tn =  [(test_measures[m][missed] <= t).sum().item() for t in kept_thr]
+                fp =  [(test_measures[m][missed] > t).sum().item() for t in kept_thr]
+                fn = [(test_measures[m][correct] <= t).sum().item() for t in kept_thr]
+
+                t95 = fpr_at_tpr(all_fpr, all_tpr, shown_tpr, all_thresholds,
+                                 return_threshold=True)[1]
                 
                 tp95 = (test_measures[m][correct] > t95).sum().item()
                 fp95 = (test_measures[m][missed] > t95).sum() .item()
 
                 
                 p95 = tp95 / (tp95 + fp95)
-                r95 = tp95 / correct.sum().item()
-                
-                precision_[m] = tp / (tp + fp)
-                recall_[m] = tp / correct.sum().item()
 
-                print('method:', m)
-                print('precision:', p95, 'recall:', r95, 'fpr:', fpr95, 'tpr:', tpr95)
+                dp95 = p95 - acc
+                
+                r95 = tp95 / correct.sum().item()
+                fpr95 = fp95 / missed.sum().item()
+                tpr95 = p95
+                
+                precision_[m] = [(t / (t + f)) for t, f in zip(tp, fp)]
+                recall_[m] = [t / correct.sum().item() for t in tp]
+
+                print(f'\t{m:6}: ', end='')
+                print('\tP={:{_p}f} ({:+{_p_1}f}) R={:{_p}f} FPR={:{_p}f}'.format(100 * p95, 100 * dp95,
+                                                                                    100 * r95, 100 * fpr95,
+                                                                                    _p=_p, _p_1=_p-1))
             
     def train_model(self,
                     trainset=None,
