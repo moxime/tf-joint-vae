@@ -1474,6 +1474,7 @@ class ClassificationVariationalNetwork(nn.Module):
         if not wygiswyu:
             logging.error('You have to compute accuracies '
                           'before computing misclassification rates')
+            return
 
         available = available_results(self, min_samples=1, ood_sets='testset')['recorders']
         
@@ -1519,7 +1520,7 @@ class ClassificationVariationalNetwork(nn.Module):
 
             fpr_, tpr_, precision_, recall_, thresholds_ = {}, {}, {}, {}, {}
 
-            print(f'{predict_method} ({100 * acc:{_p}f})')
+            logging.debug(f'*** {predict_method} ({100 * acc:{_p}f})')
             for m in methods['miss']:
                 correct_labels = np.concatenate([np.ones(len(y)), np.zeros(sum(missed))])
                 all_missed_measures = np.concatenate([test_measures[m].cpu(),
@@ -1555,10 +1556,9 @@ class ClassificationVariationalNetwork(nn.Module):
                 precision_[m] = [(t / (t + f)) for t, f in zip(tp, fp)]
                 recall_[m] = [t / correct.sum().item() for t in tp]
 
-                print(f'\t{m:6}: ', end='')
-                print('\tP={:{_p}f} ({:+{_p_1}f}) R={:{_p}f} FPR={:{_p}f}'.format(100 * p95, 100 * dp95,
-                                                                                    100 * r95, 100 * fpr95,
-                                                                                    _p=_p, _p_1=_p-1))
+                logging.debug('{:6}: \tP={:{_p}f} ({:+{_p_1}f}) R={:{_p}f} FPR={:{_p}f}'.format(m, 100 * p95, 100 * dp95,
+                                                                                                100 * r95, 100 * fpr95,
+                                                                                                _p=_p, _p_1=_p-1))
             
     def train_model(self,
                     trainset=None,
